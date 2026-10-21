@@ -1,0 +1,335 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>生产排单排程系统</title>
+<style>
+  :root{
+    --blue:#4472C4; --blue-d:#2F5597; --line:#BFBFBF; --bg:#F4F7FB;
+    --warn:#FFEB9C; --bad:#FFC7CE; --bad-t:#9C0006; --ok:#C6EFCE; --ink:#1A1A1A;
+  }
+  *{box-sizing:border-box;}
+  body{margin:0;font-family:-apple-system,"Segoe UI","Microsoft YaHei",sans-serif;background:var(--bg);color:var(--ink);font-size:14px;}
+  header{background:var(--blue-d);color:#fff;padding:14px 22px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;}
+  header h1{margin:0;font-size:18px;font-weight:600;}
+  header .acts{display:flex;gap:8px;flex-wrap:wrap;}
+  button{font-family:inherit;font-size:13px;border:1px solid var(--blue-d);background:#fff;color:var(--blue-d);padding:6px 12px;border-radius:6px;cursor:pointer;}
+  button.primary{background:var(--blue);color:#fff;border-color:var(--blue);}
+  button.danger{border-color:#C0392B;color:#C0392B;}
+  button:hover{filter:brightness(0.97);}
+  main{max-width:1280px;margin:18px auto;padding:0 16px;}
+  .kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin-bottom:18px;}
+  .kpi{background:#fff;border:1px solid var(--line);border-radius:10px;padding:14px 16px;box-shadow:0 1px 3px rgba(0,0,0,.04);}
+  .kpi .v{font-size:26px;font-weight:700;color:var(--blue-d);}
+  .kpi .l{color:#666;margin-top:4px;font-size:12px;}
+  .kpi.alert .v{color:#C0392B;}
+  .card{background:#fff;border:1px solid var(--line);border-radius:10px;padding:16px;margin-bottom:18px;box-shadow:0 1px 3px rgba(0,0,0,.04);}
+  .card h2{margin:0 0 12px;font-size:15px;color:var(--blue-d);display:flex;align-items:center;justify-content:space-between;}
+  table{border-collapse:collapse;width:100%;font-size:13px;}
+  th,td{border:1px solid var(--line);padding:6px 8px;text-align:center;}
+  th{background:var(--blue);color:#fff;position:sticky;top:0;}
+  td input,td select{width:100%;border:1px solid #ddd;border-radius:4px;padding:4px 6px;font-family:inherit;font-size:13px;}
+  td input[type=number]{text-align:right;}
+  .tbl-wrap{overflow:auto;max-height:420px;}
+  .row-del{cursor:pointer;color:#C0392B;font-weight:700;}
+  .tag-rush{background:#FCE4EC;color:#C2185B;border-radius:4px;padding:1px 6px;font-size:11px;}
+  .overdue{background:var(--bad);color:var(--bad-t);font-weight:600;}
+  .normal{color:#2E7D32;}
+  .heat td{border:1px solid #e3e3e3;padding:4px 2px;font-size:11px;min-width:42px;}
+  .heat th{font-size:11px;min-width:42px;padding:3px 2px;}
+  .heat .ov{background:var(--bad);color:var(--bad-t);font-weight:700;}
+  .heat .wn{background:var(--warn);}
+  .heat .ok{background:#EAF3DE;}
+  .legend span{display:inline-block;padding:2px 8px;border-radius:4px;margin-right:8px;font-size:12px;border:1px solid var(--line);}
+  .note{color:#666;font-size:12px;line-height:1.7;}
+  .base-row{display:flex;align-items:center;gap:8px;margin-bottom:10px;flex-wrap:wrap;}
+  .base-row label{font-weight:600;}
+  .tabs{display:flex;gap:6px;margin-bottom:14px;flex-wrap:wrap;}
+  .tabs button{border-radius:6px 6px 0 0;}
+  .tabs button.on{background:var(--blue-d);color:#fff;}
+  .sec{display:none;}
+  .sec.on{display:block;}
+  code{background:#eef;padding:1px 5px;border-radius:3px;}
+  .badge{background:#EAF3DE;color:#3B6D11;border:1px solid #97C459;border-radius:20px;padding:3px 12px;font-size:12px;margin-left:12px;}
+  .badge.on{background:#D9E2F3;color:#2F5597;border-color:#4472C4;}
+</style>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+</head>
+<body>
+<header>
+  <h1>生产排单排程系统</h1>
+  <span id="cloudStatus" class="badge">云端：本地模式</span>
+  <div class="acts">
+    <button class="primary" onclick="exportJSON()">导出数据</button>
+    <button onclick="importJSON()">导入数据</button>
+    <button onclick="resetDemo()">重置示例</button>
+    <button onclick="cloudPoll()">刷新云端</button>
+    <input type="file" id="fileIn" accept="application/json" style="display:none" onchange="doImport(event)">
+  </div>
+</header>
+
+<main>
+  <div class="kpis" id="kpis"></div>
+
+  <div class="tabs">
+    <button class="on" onclick="showSec('data')">① 数据录入</button>
+    <button onclick="showSec('sched')">② 排程结果</button>
+    <button onclick="showSec('load')">③ 产能负荷看板</button>
+    <button onclick="showSec('help')">④ 说明 / 部署</button>
+  </div>
+
+  <!-- 数据录入 -->
+  <div class="sec on" id="sec-data">
+    <div class="card">
+      <h2>产能表（产线日产能，件/天）</h2>
+      <div class="tbl-wrap"><table id="tbl-cap"></table></div>
+      <button style="margin-top:10px" onclick="addRow('cap')">+ 新增产线</button>
+    </div>
+    <div class="card">
+      <h2>供应商交期表（交货提前期，天）</h2>
+      <div class="tbl-wrap"><table id="tbl-sup"></table></div>
+      <button style="margin-top:10px" onclick="addRow('sup')">+ 新增供应商</button>
+    </div>
+    <div class="card">
+      <h2>订单表 <span class="note">（勾选「插单」的急单会被优先标出；改完自动重算）</span></h2>
+      <div class="tbl-wrap"><table id="tbl-ord"></table></div>
+      <button class="primary" style="margin-top:10px" onclick="addRow('ord')">+ 新增订单</button>
+    </div>
+  </div>
+
+  <!-- 排程结果 -->
+  <div class="sec" id="sec-sched">
+    <div class="card">
+      <h2>排程计算结果</h2>
+      <div class="tbl-wrap"><table id="tbl-sched"></table></div>
+    </div>
+  </div>
+
+  <!-- 产能负荷 -->
+  <div class="sec" id="sec-load">
+    <div class="card">
+      <h2>产能负荷热力图（按产线 × 日期，自动标红超载）</h2>
+      <div class="base-row">
+        <label>计划基准日：</label>
+        <input type="date" id="baseDate" onchange="onBaseChange()">
+        <label style="margin-left:12px">查看天数：</label>
+        <input type="number" id="horizon" value="21" min="7" max="60" style="width:70px" onchange="renderLoad()">
+      </div>
+      <div class="legend">
+        <span class="ok" style="background:#EAF3DE">正常</span>
+        <span class="wn" style="background:var(--warn)">≥80% 预警</span>
+        <span class="ov" style="background:var(--bad)">超载 &gt;100%</span>
+      </div>
+      <div class="tbl-wrap" style="margin-top:10px"><table class="heat" id="tbl-heat"></table></div>
+    </div>
+  </div>
+
+  <!-- 说明 -->
+  <div class="sec" id="sec-help">
+    <div class="card note">
+      <h2>这是什么 / 怎么用</h2>
+      <p><b>解决什么：</b>把「本公司产能 + 供应商交期 + 临时插单」三类信息放在一起，自动算出每张订单的物料到位日、占用天数、计划开始/完成日、是否逾期，并标出哪条产线哪天<b>爆产能</b>。</p>
+      <p><b>用法：</b>① 在「数据录入」填产能、供应商提前期、订单（产线/供应商用下拉选）；② 切到「排程结果」看自动排程与逾期；③ 切到「产能负荷看板」看热力图，<span class="ov" style="background:var(--bad);padding:0 4px">红格</span>就是超载的产线/日期；④ 临时插单：在订单里加一行并勾「插单」，系统立即重算，看红格出现在哪天，据此决定插哪个空档。</p>
+      <p><b>数据存哪：</b>全部存在你浏览器本地（localStorage），不清缓存就不会丢；也可用「导出数据」存成 JSON 备份，或「导入数据」恢复。多人协作需后端/数据库，本 MVP 为单机版。</p>
+      <p><b>部署到 GitHub Pages（免费上线，团队网页访问）：</b></p>
+      <ol>
+        <li>在 GitHub 新建一个仓库（如 <code>aps</code>），把本 <code>index.html</code> 推上去；</li>
+        <li>仓库 Settings → Pages → Source 选 <code>main</code> 分支根目录 → Save；</li>
+        <li>几分钟后访问 <code>https://你的账号.github.io/aps/</code> 即可。</li>
+      </ol>
+      <p><b>多人实时协作（Supabase，免费）：</b></p>
+      <ol>
+        <li>注册免费 Supabase 账号（supabase.com），新建项目，进入 SQL Editor 执行下面的建表语句；</li>
+        <li>项目 Settings → API 拿到 <code>Project URL</code> 和 <code>anon public key</code>；</li>
+        <li>把这两个值填进本文件脚本顶部的 <code>SUPABASE_URL</code> / <code>SUPABASE_ANON_KEY</code>；</li>
+        <li>重新部署到 GitHub Pages，同事打开同一网址即可同时看、同时改、数据每 6 秒自动同步。</li>
+      </ol>
+      <p class="note">建表 SQL：<br><code>create table aps_state (id text primary key, data jsonb not null, updated_at timestamptz default now());</code><br><code>alter table aps_state enable row level security;</code><br><code>create policy "open" on aps_state for all using (true) with check (true);</code></p>
+      <p class="note">安全提示：上述策略允许任何人（持 anon key）读写，适合内部小团队；若需权限控制可改为按登录用户限制。anon key 设计上可公开，嵌入前端无碍。</p>
+      <p class="note">注：本系统用自然日计算占用天数（未扣除周末）；如需按工作日、或做同产线严格串行排队，可在此基础上继续扩展。</p>
+    </div>
+  </div>
+</main>
+
+<script>
+// ---------- 工具 ----------
+const $=(id)=>document.getElementById(id);
+function pDate(s){ if(!s) return null; const d=new Date(s+"T00:00:00"); return isNaN(d)?null:d; }
+function fDate(d){ if(!d) return ""; const z=(n)=>String(n).padStart(2,'0'); return d.getFullYear()+"-"+z(d.getMonth()+1)+"-"+z(d.getDate()); }
+function addDays(d,n){ const x=new Date(d); x.setDate(x.getDate()+n); return x; }
+function diffDays(a,b){ return Math.round((b-a)/86400000); }
+function maxD(a,b){ if(!a) return b; if(!b) return a; return a>b?a:b; }
+
+// ---------- 云端协作（Supabase，可选） ----------
+// 和同事一起用：在下方填入 Supabase 项目 URL 与 anon key（公开安全），
+// 并先在 Supabase 建好 aps_state 表（见「④ 说明/部署」里的 SQL），即可多人实时同步。
+const SUPABASE_URL="";
+const SUPABASE_ANON_KEY="";
+const CLOUD=!!(SUPABASE_URL&&SUPABASE_ANON_KEY);
+let sbClient=null, cloudTs=0, pollingTimer=null;
+async function cloudLoad(){ if(!CLOUD)return null; if(!sbClient)sbClient=window.supabase.createClient(SUPABASE_URL,SUPABASE_ANON_KEY); const {data,error}=await sbClient.from('aps_state').select('data,updated_at').eq('id','main').single(); if(error&&error.code!=='PGRST116')return null; return data; }
+async function cloudSave(state){ if(!CLOUD||!sbClient)return; const ts=new Date().toISOString(); const {error}=await sbClient.from('aps_state').upsert({id:'main',data:state,updated_at:ts}); cloudTs=ts; if(error)console.warn(error); }
+function isEditing(){ const a=document.activeElement; return a&&(a.tagName==='INPUT'||a.tagName==='SELECT'); }
+async function cloudPoll(){ const d=await cloudLoad(); if(d&&d.updated_at&&new Date(d.updated_at)>new Date(cloudTs)){ cloudTs=d.updated_at; D=d.data; renderComputed(); if(!isEditing()){ renderCap(); renderSup(); renderOrd(); setCloud('已同步 '+fmtClock(cloudTs)); } else setCloud('远端已更新(你正在编辑)'); } }
+function setCloud(t){ const e=$("cloudStatus"); if(e){ e.textContent="云端："+t; e.classList.add('on'); } }
+function fmtClock(s){ try{ return new Date(s).toLocaleTimeString('zh-CN'); }catch(e){ return ''; } }
+
+const KEY="aps_data_v1";
+function defaultData(){
+  return {
+    base:"2026-10-21", horizon:21,
+    caps:[{line:"注塑线",cap:200},{line:"装配线",cap:150},{line:"焊接线",cap:100},{line:"SMT线",cap:120}],
+    sups:[{name:"供应商A",lead:7},{name:"供应商B",lead:10},{name:"供应商C",lead:5},{name:"供应商D",lead:14}],
+    ords:[
+      {no:"PO-001",cust:"客户甲",prod:"外壳",line:"注塑线",qty:600,rel:"2026-10-21",sup:"供应商A",due:"2026-11-10",pri:"中",rush:false},
+      {no:"PO-002",cust:"客户乙",prod:"主板",line:"SMT线",qty:240,rel:"2026-10-21",sup:"供应商B",due:"2026-11-05",pri:"中",rush:false},
+      {no:"PO-003",cust:"客户丙",prod:"支架",line:"焊接线",qty:300,rel:"2026-10-22",sup:"供应商C",due:"2026-11-08",pri:"低",rush:false},
+      {no:"PO-004",cust:"客户甲",prod:"成品",line:"装配线",qty:450,rel:"2026-10-23",sup:"供应商D",due:"2026-11-01",pri:"高",rush:false},
+      {no:"PO-005",cust:"客户丁",prod:"面板",line:"注塑线",qty:500,rel:"2026-10-25",sup:"供应商A",due:"2026-11-12",pri:"中",rush:false},
+      {no:"PO-006",cust:"客户乙",prod:"电源",line:"SMT线",qty:360,rel:"2026-10-26",sup:"供应商B",due:"2026-10-30",pri:"高",rush:false},
+      {no:"PO-101",cust:"客户戊",prod:"急件",line:"装配线",qty:200,rel:"2026-10-28",sup:"供应商C",due:"2026-11-03",pri:"高",rush:true},
+      {no:"PO-007",cust:"客户丙",prod:"外壳B",line:"注塑线",qty:400,rel:"2026-10-27",sup:"供应商A",due:"2026-11-15",pri:"低",rush:false}
+    ]
+  };
+}
+let D=load();
+function load(){ try{ const s=localStorage.getItem(KEY); if(s) return JSON.parse(s);}catch(e){} return defaultData(); }
+function save(){ try{ localStorage.setItem(KEY, JSON.stringify(D)); }catch(e){} if(CLOUD)cloudSave(D); }
+
+// ---------- 计算 ----------
+function compute(cached){
+  const capMap={}, supMap={};
+  D.caps.forEach(c=>capMap[c.line]=Number(c.cap)||0);
+  D.sups.forEach(s=>supMap[s.name]=Number(s.lead)||0);
+  const rows=[];
+  D.ords.forEach(o=>{
+    const lead=supMap[o.sup]??0, cap=capMap[o.line]??0;
+    const rel=pDate(o.rel), due=pDate(o.due);
+    const mat = rel? addDays(rel,lead):null;
+    const occ = (cap>0 && o.qty>0)? Math.ceil(Number(o.qty)/cap):0;
+    const start = maxD(rel,mat);
+    const fin = (start&&occ)? addDays(start,occ-1):null;
+    const overdue = (fin&&due)? diffDays(fin,due)>0 : false; // 完成日晚于要求交期
+    const gap = (fin&&due)? diffDays(fin,due) : null;
+    const load = (occ>0)? Number(o.qty)/occ : 0;
+    rows.push({...o, lead, cap, mat, occ, start, fin, overdue, gap, load});
+  });
+  // 负荷矩阵
+  const base=pDate(D.base)||new Date(); const H=Number(D.horizon)||21;
+  const dates=[]; for(let i=0;i<H;i++) dates.push(addDays(base,i));
+  const matrix={}; let overloadLines=new Set();
+  D.caps.forEach(c=>{
+    matrix[c.line]=dates.map(d=>{
+      let sum=0;
+      rows.forEach(r=>{ if(r.line===c.line && r.start && r.fin && diffDays(r.start,d)>=0 && diffDays(d,r.fin)>=0) sum+=r.load; });
+      return {date:d, load:sum, cap:Number(c.cap)||0};
+    });
+    if(matrix[c.line].some(x=>x.cap>0 && x.load>x.cap)) overloadLines.add(c.line);
+  });
+  return {rows, dates, matrix, overloadLines, capMap};
+}
+
+// ---------- 渲染 ----------
+function renderKPIs(C){
+  const total=C.rows.length;
+  const overdue=C.rows.filter(r=>r.overdue).length;
+  const rush=C.rows.filter(r=>r.rush).length;
+  const ovr=C.overloadLines.size;
+  const cards=[
+    {v:total,l:"订单总数"},{v:overdue,l:"逾期订单",alert:overdue>0},
+    {v:rush,l:"插单数量"},{v:ovr,l:"超载产线",alert:ovr>0}
+  ];
+  $("kpis").innerHTML=cards.map(c=>`<div class="kpi ${c.alert?'alert':''}"><div class="v">${c.v}</div><div class="l">${c.l}</div></div>`).join("");
+}
+function lineOptions(sel){ return D.caps.map(c=>`<option ${c.line===sel?'selected':''}>${c.line}</option>`).join(""); }
+function supOptions(sel){ return D.sups.map(s=>`<option ${s.name===sel?'selected':''}>${s.name}</option>`).join(""); }
+function renderCap(){
+  let h="<tr><th>产线</th><th>日产能(件)</th><th></th></tr>";
+  D.caps.forEach((c,i)=>{ h+=`<tr><td><input value="${c.line}" onchange="upd('cap',${i},'line',this.value);renderCap();renderOrd();renderComputed()"></td>`+
+    `<td><input type=number value="${c.cap}" onchange="upd('cap',${i},'cap',this.value);renderComputed()"></td>`+
+    `<td class="row-del" onclick="del('cap',${i})">✕</td></tr>`; });
+  $("tbl-cap").innerHTML=h;
+}
+function renderSup(){
+  let h="<tr><th>供应商</th><th>提前期(天)</th><th></th></tr>";
+  D.sups.forEach((s,i)=>{ h+=`<tr><td><input value="${s.name}" onchange="upd('sup',${i},'name',this.value);renderSup();renderOrd();renderComputed()"></td>`+
+    `<td><input type=number value="${s.lead}" onchange="upd('sup',${i},'lead',this.value);renderComputed()"></td>`+
+    `<td class="row-del" onclick="del('sup',${i})">✕</td></tr>`; });
+  $("tbl-sup").innerHTML=h;
+}
+function renderOrd(){
+  let h=`<tr><th>订单号</th><th>客户</th><th>产品</th><th>产线</th><th>数量</th><th>下单日期</th><th>供应商</th><th>要求交期</th><th>优先级</th><th>插单</th><th></th></tr>`;
+  D.ords.forEach((o,i)=>{ h+=`<tr>
+    <td><input value="${o.no}" onchange="upd('ord',${i},'no',this.value)"></td>
+    <td><input value="${o.cust}" onchange="upd('ord',${i},'cust',this.value)"></td>
+    <td><input value="${o.prod}" onchange="upd('ord',${i},'prod',this.value)"></td>
+    <td><select onchange="upd('ord',${i},'line',this.value);renderComputed()">${lineOptions(o.line)}</select></td>
+    <td><input type=number value="${o.qty}" onchange="upd('ord',${i},'qty',this.value);renderComputed()"></td>
+    <td><input type=date value="${o.rel}" onchange="upd('ord',${i},'rel',this.value);renderComputed()"></td>
+    <td><select onchange="upd('ord',${i},'sup',this.value);renderComputed()">${supOptions(o.sup)}</select></td>
+    <td><input type=date value="${o.due}" onchange="upd('ord',${i},'due',this.value);renderComputed()"></td>
+    <td><select onchange="upd('ord',${i},'pri',this.value)"><option ${o.pri==='高'?'selected':''}>高</option><option ${o.pri==='中'?'selected':''}>中</option><option ${o.pri==='低'?'selected':''}>低</option></select></td>
+    <td><input type=checkbox ${o.rush?'checked':''} onchange="upd('ord',${i},'rush',this.checked);renderComputed()"> ${o.rush?'<span class="tag-rush">插单</span>':''}</td>
+    <td class="row-del" onclick="del('ord',${i})">✕</td></tr>`; });
+  $("tbl-ord").innerHTML=h;
+}
+function renderSched(C){
+  let h=`<tr><th>订单号</th><th>产线</th><th>数量</th><th>供应商提前期</th><th>物料到位日</th><th>日产能</th><th>占用天数</th><th>计划开始</th><th>计划完成</th><th>要求交期</th><th>状态</th><th>交期缺口(天)</th></tr>`;
+  C.rows.forEach(r=>{
+    const st=r.overdue?`<span class="overdue">逾期</span>`:`<span class="normal">正常</span>`;
+    const gap=r.gap==null?"":(r.gap<0?`<span class="overdue">${r.gap}</span>`:r.gap);
+    h+=`<tr ${r.rush?'style="background:#FFF4F8"':''}>
+      <td>${r.no}${r.rush?' <span class="tag-rush">插单</span>':''}</td>
+      <td>${r.line}</td><td style="text-align:right">${r.qty}</td>
+      <td>${r.lead}</td><td>${fDate(r.mat)}</td><td>${r.cap}</td><td>${r.occ}</td>
+      <td>${fDate(r.start)}</td><td>${fDate(r.fin)}</td><td>${fDate(pDate(r.due))}</td>
+      <td>${st}</td><td>${gap}</td></tr>`;
+  });
+  $("tbl-sched").innerHTML=h;
+}
+function renderLoad(){
+  D.base=$("baseDate").value; D.horizon=Number($("horizon").value)||21;
+  const C=compute();
+  let h="<tr><th>产线</th><th>日产能</th>";
+  C.dates.forEach(d=>{ h+=`<th>${fDate(d).slice(5)}</th>`; });
+  h+="</tr>";
+  D.caps.forEach(c=>{
+    const row=C.matrix[c.line];
+    h+=`<tr><td>${c.line}</td><td>${c.cap}</td>`;
+    row.forEach(x=>{
+      const ratio=x.cap>0?x.load/x.cap:0;
+      let cls="ok"; if(ratio>1) cls="ov"; else if(ratio>=0.8) cls="wn";
+      h+=`<td class="${cls}">${x.load>0?x.load.toFixed(0):""}</td>`;
+    });
+    h+="</tr>";
+  });
+  $("tbl-heat").innerHTML=h;
+}
+function renderComputed(){ const C=compute(); renderKPIs(C); renderSched(C); renderLoad(); }
+
+// ---------- 操作 ----------
+function upd(t,i,k,v){ if(t==='cap')D.caps[i][k]=v; else if(t==='sup')D.sups[i][k]=v; else D.ords[i][k]=v; save(); }
+function addRow(t){ if(t==='cap')D.caps.push({line:"新产线",cap:0}); else if(t==='sup')D.sups.push({name:"新供应商",lead:0}); else D.ords.push({no:"PO-"+(D.ords.length+1),cust:"",prod:"",line:D.caps[0]?.line||"",qty:0,rel:D.base,sup:D.sups[0]?.name||"",due:D.base,pri:"中",rush:false}); save(); renderCap(); renderSup(); renderOrd(); renderComputed(); }
+function del(t,i){ if(t==='cap')D.caps.splice(i,1); else if(t==='sup')D.sups.splice(i,1); else D.ords.splice(i,1); save(); renderCap(); renderSup(); renderOrd(); renderComputed(); }
+function onBaseChange(){ D.base=$("baseDate").value; save(); renderComputed(); }
+function showSec(s){ document.querySelectorAll('.tabs button').forEach(b=>b.classList.remove('on')); document.querySelectorAll('.sec').forEach(x=>x.classList.remove('on')); event.target.classList.add('on'); $('sec-'+s).classList.add('on'); }
+function resetDemo(){ if(confirm("重置为示例数据？当前数据将被覆盖。")){ D=defaultData(); save(); init(); } }
+
+function exportJSON(){ const b=new Blob([JSON.stringify(D,null,2)],{type:"application/json"}); const a=document.createElement("a"); a.href=URL.createObjectURL(b); a.download="aps-data.json"; a.click(); }
+function importJSON(){ $("fileIn").click(); }
+function doImport(e){ const f=e.target.files[0]; if(!f)return; const r=new FileReader(); r.onload=()=>{ try{ D=JSON.parse(r.result); save(); init(); alert("导入成功"); }catch(err){ alert("解析失败"); } }; r.readAsText(f); }
+
+function init(){
+  $("baseDate").value=D.base||"2026-10-21"; $("horizon").value=D.horizon||21;
+  if(CLOUD){
+    setCloud("连接中…");
+    cloudLoad().then(d=>{ if(d&&d.data){ D=d.data; cloudTs=d.updated_at||0; } setCloud("已连接"); renderCap(); renderSup(); renderOrd(); renderComputed(); pollingTimer=setInterval(cloudPoll,6000); });
+  } else {
+    renderCap(); renderSup(); renderOrd(); renderComputed();
+  }
+}
+init();
+</script>
+</body>
+</html>
